@@ -1,0 +1,71 @@
+{
+  "name": "koishi-plugin-music-voice-br",
+  "description": "基于koishi-plugin-music-voice，添加美化图片菜单",
+  "version": "0.0.8",
+  "main": "lib/index.js",
+  "typings": "lib/index.d.ts",
+  "files": [
+    "lib",
+    "src",
+    "source"  
+  ],
+  "license": "MIT",
+  "keywords": [
+    "chatbot",
+    "koishi",
+    "plugin",
+    "music",
+    "voice",
+    "song",
+    "download",
+    "netease",
+    "music-voice",
+    "custom-background",
+    "custom-font"
+  ],
+  "homepage": "https://github.com/Minecraft-1314/koishi-plugin-music-voice-br",
+  "bugs": {
+    "url": "https://github.com/idranme/koishi-plugin-music-voice/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Minecraft-1314/koishi-plugin-music-voice-br.git"
+  },
+  "koishi": {
+    "browser": false,  
+    "description": {
+      "zh": "基于koishi-plugin-music-voice，添加美化图片菜单"
+    },
+    "service": {
+      "required": [
+        "logger",
+        "http",
+        "i18n"
+      ],
+      "optional": [
+        "puppeteer"
+      ]
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "clean": "rimraf lib",
+    "prepublishOnly": "npm run clean && npm run build"  
+  },
+  "peerDependencies": {
+    "koishi": "^4.17.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.20",
+    "@types/fs-extra": "^11.0.4",
+    "rimraf": "^5.0.5",
+    "typescript": "^5.3.3"
+  },
+  "dependencies": {
+    "koishi-plugin-puppeteer": "^3.7.1"
+  },
+  "engines": {  
+    "node": ">=16.0.0"
+  }
+}
