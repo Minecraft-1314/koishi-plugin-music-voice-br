@@ -4,23 +4,22 @@
 
 ### 中文
 本插件基于koishi-plugin-music-voice，添加美化图片菜单，基础功能完全兼容原版：
-- 新增美化图片菜单
 
 > 原版 koishi-plugin-music-voice 基础功能文档：https://github.com/idranme/koishi-plugin-music-voice  
-> UI 参考插件：https://github.com/Minecraft-1314/koishi-plugin-preview-help
 
 ### English
 This plugin is based on koishi-plugin-music-voice, adding a menu for enhancing images. Its basic functions are fully compatible with the original version.
-- Added Image Enhancement Menu
 
 > Original koishi-plugin-music-voice documentation: https://github.com/idranme/koishi-plugin-music-voice  
-> UI Reference Plugin: https://github.com/Minecraft-1314/koishi-plugin-preview-help
 
-## 项目仓库 (Repository)
-- 本优化版仓库: `https://github.com/Minecraft-1314/koishi-plugin-music-voice-br`
-- 原版插件仓库: `https://github.com/idranme/koishi-plugin-music-voice`
-- UI 参考仓库: `https://github.com/koishi-shangxue-plugins/koishi-shangxue-apps/tree/main/plugins/preview-help`
-- Issues: `https://github.com/Minecraft-1314/koishi-plugin-music-voice-br/issues`
+## 参考项目 (References)
+
+本项目参考了以下开源项目，特此感谢：
+
+- [koishi-plugin-music-voice](https://github.com/idranme/koishi-plugin-music-voice) - 原版 koishi-plugin-music-voice 开发
+
+- [koishi-shangxue-apps](https://github.com/koishi-shangxue-plugins/koishi-shangxue-apps/tree/main/plugins/preview-help) - UI 背景图灵感
+
 
 ## 项目贡献者 (Contributors)
 
