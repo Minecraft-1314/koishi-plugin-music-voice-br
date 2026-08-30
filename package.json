@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-music-voice-br",
   "description": "基于koishi-plugin-music-voice，添加美化图片菜单",
-  "version": "0.0.9",
+  "version": "0.1.0",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [

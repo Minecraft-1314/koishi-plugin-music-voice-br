@@ -1,11 +1,12 @@
+import fs from 'node:fs'
+import path from 'node:path'
+import url from 'node:url'
 import { Context, Schema, h, isNullable, Session } from 'koishi'
-import { } from 'koishi-plugin-puppeteer'
-
-import os from 'node:os';
-import fs from 'node:fs';
-import crypto from 'node:crypto';
-import path from 'node:path';
-import url from 'node:url';
+import 'koishi-plugin-puppeteer'
+import type { PluginConfig, SongData } from './types'
+import { searchNetEase } from './netease'
+import { generateSongListImage } from './image'
+import { downloadFile, lastMessageId, toMessageIds, tryDeleteMessage, tryDeleteMessages } from './util'
 
 export const name = 'music-voice'
 export const inject = {
@@ -27,31 +28,6 @@ export const usage = `
 - [silk服务](/market?keyword=silk)  （可选安装）
 ---
 `
-
-export interface PluginConfig {
-  commandName: string;
-  commandAlias: string;
-  generationTip: string;
-  recallMessages: string[];
-  waitForTimeout: number;
-  imageMode: boolean;
-  screenshotQuality: number;
-  searchListCount: number;
-  nextPageCommand: string;
-  prevPageCommand: string;
-  exitCommandList: string[];
-  menuExitCommandTip: boolean;
-  maxSongDuration: number;
-  enableRateLimit: boolean;
-  rateLimitScope?: 'user' | 'channel' | 'platform';
-  rateLimitInterval?: number;
-  type: 'apis' | 'custom';
-  metingAPI?: string;
-  text?: string;
-  useProxy: boolean;
-  srcToWhat: 'text' | 'audio' | 'audiobuffer' | 'video' | 'file';
-  loggerinfo: boolean;
-}
 
 export const Config: Schema<PluginConfig> = Schema.intersect([
   Schema.object({
@@ -152,293 +128,42 @@ export const Config: Schema<PluginConfig> = Schema.intersect([
   }).description('开发者选项'),
 ]) as Schema<PluginConfig>;
 
-interface SongData {
-  id: number;
-  name: string;
-  artists: string;
-  albumName: string;
-  duration: number;
-  lrc?: string;
-}
-
-interface NetEaseSearchResponse {
-  result?: {
-    songs?: NetEaseSongItem[];
-  };
-}
-
-interface NetEaseSongItem {
-  id: number;
-  name: string;
-  artists: { name: string }[];
-  album: { name: string };
-  duration: number;
-}
-
-async function toBase64(filePath: string): Promise<string> {
-  try {
-    const buffer = await fs.promises.readFile(filePath)
-    const ext = path.extname(filePath).toLowerCase()
-    let mime = 'application/octet-stream'
-    if (ext === '.png') mime = 'image/png'
-    else if (ext === '.jpg' || ext === '.jpeg') mime = 'image/jpeg'
-    else if (ext === '.otf') mime = 'font/otf'
-    else if (ext === '.ttf') mime = 'font/ttf'
-    return `data:${mime};base64,${buffer.toString('base64')}`
-  } catch (e) {
-    return ''
-  }
-}
-
-async function searchNetEase(keyword: string, limit: number = 10, offset: number = 0, config: PluginConfig, ctx: Context, logger: any): Promise<SongData[]> {
-  const searchApiUrl = `http://music.163.com/api/search/get/web?csrf_token=hlpretag=&hlposttag=&s=${encodeURIComponent(keyword)}&type=1&offset=${offset}&total=true&limit=${limit}`;
-
-  try {
-    let searchApiResponse: string;
-
-    if (config.useProxy) {
-      const proxyUrl = 'https://web-proxy.apifox.cn/api/v1/request';
-      searchApiResponse = await ctx.http.post(proxyUrl, {}, {
-        headers: {
-          'api-u': searchApiUrl,
-          'api-o0': 'method=GET, timings=true, timeout=3000',
-          'Content-Type': 'application/json'
-        }
-      });
-    } else {
-      searchApiResponse = await ctx.http.get(searchApiUrl);
-    }
-
-    const parsedSearchApiResponse: NetEaseSearchResponse = typeof searchApiResponse === 'string' 
-      ? JSON.parse(searchApiResponse) 
-      : searchApiResponse;
-    const searchData = parsedSearchApiResponse.result;
-
-    if (!searchData || !searchData.songs || searchData.songs.length === 0) {
-      return [];
-    }
-
-    const songList: SongData[] = searchData.songs.map((song) => {
-      return {
-        id: song.id,
-        name: song.name,
-        artists: song.artists.map(artist => artist.name).join('/'),
-        albumName: song.album.name,
-        duration: song.duration
-      };
-    });
-    return songList;
-  } catch (error) {
-    return [];
-  }
-}
-
-async function generateSongListImage(songData: SongData[], startIndex: number, config: PluginConfig, fontFilePath: string, backgroundImagePath: string, ctx: Context, logger: any) {
-  if (!ctx.puppeteer) {
-    return null;
-  }
-
-  if (!fs.existsSync(fontFilePath) || !fs.existsSync(backgroundImagePath)) {
-    return null;
-  }
-
-  const fontBase64 = await toBase64(fontFilePath);
-  const bgBase64 = await toBase64(backgroundImagePath);
-
-  if (!fontBase64 || !bgBase64) {
-    return null;
-  }
-
-  const html = `
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-  <meta charset="UTF-8">
-  <style>
-    @font-face {
-      font-family: 'JingNan';
-      src: url('${fontBase64}');
-    }
-    * {
-      box-sizing: border-box;
-    }
-    html, body {
-      margin: 0;
-      padding: 0;
-      width: 100%;
-      min-height: 100vh;
-    }
-    body {
-      padding: 40px 20px;
-      font-family: 'JingNan', sans-serif;
-      background-image: url('${bgBase64}');
-      background-size: 100% auto;
-      background-position: top center;
-      background-repeat: repeat-y;
-      background-attachment: scroll;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-    }
-    .title {
-      font-size: 64px;
-      color: #333;
-      margin-bottom: 40px;
-      text-shadow: 2px 2px 4px rgba(255,255,255,0.8);
-      font-weight: bold;
-    }
-    .container {
-      column-count: 3;
-      column-gap: 20px;
-      width: 100%;
-      max-width: 1200px;
-    }
-    @media (max-width: 900px) {
-      .container {
-        column-count: 2;
-      }
-    }
-    @media (max-width: 600px) {
-      .container {
-        column-count: 1;
-      }
-    }
-    .card {
-      break-inside: avoid;
-      margin-bottom: 20px;
-      background: rgba(255, 255, 255, 0.88);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
-      border-radius: 20px;
-      padding: 20px 25px;
-      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
-      border: 1px solid rgba(255, 255, 255, 0.5);
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-    }
-    .cmd-name {
-      font-size: 36px;
-      font-weight: bold;
-      color: #ff5e5e;
-      word-break: break-all;
-    }
-    .has-desc .cmd-name {
-      margin-bottom: 10px;
-      border-bottom: 3px dashed #ffadad;
-      padding-bottom: 6px;
-      font-size: 32px;
-    }
-    .cmd-desc {
-      font-size: 22px;
-      color: #333;
-      line-height: 1.4;
-      word-break: break-all;
-    }
-    .no-desc {
-      align-items: center;
-      text-align: center;
-      min-height: 100px;
-    }
-  </style>
-</head>
-<body>
-  <div class="title">✨ 网易云音乐歌单 ✨</div>
-  <div class="container">
-    ${songData.map((song, index) => {
-        const songIndex = index + startIndex + 1;
-        const desc = `${song.artists} - ${song.albumName}`;
-        return `
-        <div class="card has-desc">
-          <div class="cmd-name">${songIndex}. ${song.name}</div>
-          <div class="cmd-desc">${desc}</div>
-        </div>
-      `
-      }).join('')}
-  </div>
-</body>
-</html>
-  `;
-
-  let page: any;
-  try {
-    page = await ctx.puppeteer.page();
-    await page.setViewport({ width: 1280, height: 100, deviceScaleFactor: 1 });
-    await page.setContent(html);
-    await page.waitForNetworkIdle();
-
-    const image = await page.screenshot({
-      type: 'jpeg',
-      quality: config.screenshotQuality,
-      encoding: 'binary',
-      fullPage: true
-    });
-
-    return image;
-  } catch (err) {
-    return null;
-  } finally {
-    if (page) await page.close();
-  }
-}
-
-function formatSongList(data: SongData[], platform: string, startIndex: number, isImageMode: boolean = true) {
-  const separator = isImageMode ? '<br/>' : '\n';
+function formatSongList(data: SongData[], platform: string, startIndex: number): string {
   const formatted = data.map((song, index) => {
-    let item = `${index + startIndex + 1}. ${song.name} -- ${song.artists} -- ${song.albumName}`
-    return item
-  }).join(separator)
-  if (isImageMode) {
-    return `<b>${platform}</b>:<br/>${formatted}`
-  } else {
-    return `${platform}:\n${formatted}`
-  }
+    return `${index + startIndex + 1}. ${song.name} -- ${song.artists} -- ${song.albumName}`
+  }).join('\n')
+  return `${platform}:\n${formatted}`
 }
 
-async function downloadFile(url: string, logger: any): Promise<string | null> {
-  try {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-    const buffer = await response.arrayBuffer();
-    const contentType = response.headers.get('content-type') || '';
-    
-    let ext = '.mp3';
-    if (contentType.includes('audio/mpeg')) {
-      ext = '.mp3';
-    } else if (contentType.includes('audio/mp4')) {
-      ext = '.m4a';
-    } else if (contentType.includes('audio/wav')) {
-      ext = '.wav';
-    } else if (contentType.includes('audio/flac')) {
-      ext = '.flac';
-    }
-    
-    const filename = crypto.randomBytes(8).toString('hex') + ext;
-    const filePath = path.join(os.tmpdir(), filename);
-    fs.writeFileSync(filePath, Buffer.from(buffer));
-    return filePath;
-  } catch (error) {
-    logger.error('文件下载失败:', error);
-    return null;
+function enforceRateLimit(rateLimitMap: Map<string, number>, key: string, interval: number): number | null {
+  const now = Date.now()
+  const lastUseTime = rateLimitMap.get(key)
+  if (lastUseTime !== undefined) {
+    const remaining = Math.ceil(interval - (now - lastUseTime) / 1000)
+    if (remaining > 0) return remaining
   }
+  for (const [k, t] of rateLimitMap) {
+    if (now - t >= interval * 1000) rateLimitMap.delete(k)
+  }
+  rateLimitMap.set(key, now)
+  return null
 }
 
 export function apply(ctx: Context, config: PluginConfig) {
   ctx.on('ready', async () => {
     const logger = ctx.logger('music-voice')
-    const rateLimitMap = new Map<string, number>();
+    const rateLimitMap = new Map<string, number>()
 
-    const pluginRoot = __dirname;
-    const sourceDir = path.resolve(pluginRoot, '../source');
-    const fontFilePath = path.resolve(sourceDir, '荆南麦圆体.otf');
-    const backgroundImagePath = path.resolve(sourceDir, 'qzbknd.png');
+    const sourceDir = path.join(__dirname, '..', 'source')
+    const fontFilePath = path.resolve(sourceDir, '荆南麦圆体.otf')
+    const backgroundImagePath = path.resolve(sourceDir, 'qzbknd.png')
 
     ctx.i18n.define("zh-CN", {
       commands: {
         [config.commandName]: {
           description: `搜索歌曲并播放网易云音乐`,
           messages: {
-            "nokeyword": `请输入歌曲相关信息。\n➣示例：${ctx.root.config.prefix[0]}${config.commandName} 蔚蓝档案`,
+            "nokeyword": `请输入歌曲相关信息。\n➣示例：${ctx.root.config.prefix[0] ?? '/'}${config.commandName} 蔚蓝档案`,
             "songlisterror": "无法获取歌曲列表，请稍后再试。",
             "invalidKeyword": "无法获取歌曲列表，请尝试更换关键词。",
             "exitCommandTip": "退出选择请发 [{0}] 中的任意内容<br/><br/>",
@@ -457,296 +182,236 @@ export function apply(ctx: Context, config: PluginConfig) {
           }
         },
       },
-    });
+    })
 
     ctx.command(`${config.commandName || "music"} <keyword:text>`)
       .alias(config.commandAlias || "mdff")
       .option('number', '-n <number:number> 歌曲序号')
       .action(async ({ session, options }, keyword) => {
-        if (!session) return;
+        if (!session) return
         if (!keyword) return session.text(".nokeyword")
 
         if (config.enableRateLimit) {
-          let rateLimitKey: string;
+          let rateLimitKey: string
           switch (config.rateLimitScope) {
-            case 'user':
-              rateLimitKey = `${session.platform}:${session.userId}`;
-              break;
             case 'channel':
-              rateLimitKey = `${session.platform}:${session.channelId}`;
-              break;
+              rateLimitKey = `${session.platform}:${session.channelId}`
+              break
             case 'platform':
-              rateLimitKey = session.platform;
-              break;
+              rateLimitKey = session.platform
+              break
             default:
-              rateLimitKey = `${session.platform}:${session.userId}`;
+              rateLimitKey = `${session.platform}:${session.userId}`
           }
-
-          const now = Date.now();
-          const lastUseTime = rateLimitMap.get(rateLimitKey);
-
-          if (lastUseTime) {
-            const timePassed = (now - lastUseTime) / 1000;
-            const rateLimitInterval = config.rateLimitInterval ?? 60;
-            const remainingTime = rateLimitInterval - timePassed;
-
-            if (remainingTime > 0) {
-              return session.text(".rateLimitExceeded", [Math.ceil(remainingTime).toString()]);
-            }
+          const remaining = enforceRateLimit(rateLimitMap, rateLimitKey, config.rateLimitInterval ?? 60)
+          if (remaining !== null) {
+            return session.text(".rateLimitExceeded", [remaining.toString()])
           }
-
-          rateLimitMap.set(rateLimitKey, now);
         }
 
-        logger.info(session.stripped.content)
-        let neteaseData: SongData[] = [];
-        let selected: SongData;
-        const originalMessageId = session.messageId || '';
-        let quoteId = session.messageId || '';
-        let songListMessageId: string | null = null;
+        if (config.loggerinfo) logger.info(session.stripped.content)
+
+        let neteaseData: SongData[] = []
+        let selected: SongData | undefined
+        const originalMessageId = session.messageId || ''
+        let quoteId = session.messageId || ''
+        let songListMessageIds: string[] = []
 
         if (options && options.number !== undefined) {
           try {
-            neteaseData = await searchNetEase(keyword, config.searchListCount, 0, config, ctx, logger);
+            neteaseData = await searchNetEase(keyword, config.searchListCount, 0, config, ctx)
           } catch (err) {
-            const errorMessage = (err as Error).message || '未知错误';
-            logger.warn('获取网易云音乐数据时发生错误', errorMessage);
-            return session.text(".songlisterror");
+            logger.warn('获取网易云音乐数据时发生错误', (err as Error).message || '未知错误')
+            return session.text(".songlisterror")
           }
+          if (!neteaseData.length) return session.text(".invalidKeyword")
 
-          if (!neteaseData.length) return session.text(".invalidKeyword");
-
-          const serialNumber = options.number;
+          const serialNumber = options.number
           if (!Number.isInteger(serialNumber) || serialNumber < 1 || serialNumber > neteaseData.length) {
-            return `${h.quote(quoteId)}` + session.text(".invalidNumber");
+            return `${h.quote(quoteId)}` + session.text(".invalidNumber")
           }
-          selected = neteaseData[serialNumber - 1];
+          selected = neteaseData[serialNumber - 1]
         } else {
-          let currentPage = 0;
-          const pageSize = config.searchListCount;
+          let currentPage = 0
+          const pageSize = config.searchListCount
 
           while (true) {
             try {
-              neteaseData = await searchNetEase(keyword, pageSize, currentPage * pageSize, config, ctx, logger);
+              neteaseData = await searchNetEase(keyword, pageSize, currentPage * pageSize, config, ctx)
             } catch (err) {
-              const errorMessage = (err as Error).message || '未知错误';
-              logger.warn('获取网易云音乐数据时发生错误', errorMessage);
-              return session.text(".songlisterror");
+              logger.warn('获取网易云音乐数据时发生错误', (err as Error).message || '未知错误')
+              return session.text(".songlisterror")
             }
 
             if (!neteaseData.length) {
               if (currentPage === 0) {
-                return session.text(".invalidKeyword");
+                return session.text(".invalidKeyword")
               } else {
-                await session.send(`${h.quote(quoteId)}` + session.text(".noMoreSongs"));
-                currentPage--;
-                continue;
+                await session.send(`${h.quote(quoteId)}` + session.text(".noMoreSongs"))
+                currentPage--
+                continue
               }
             }
 
-            const listStartIndex = currentPage * pageSize;
-            const exitCommands = config.exitCommandList;
-            const exitCommandTip = config.menuExitCommandTip ? session.text(".exitCommandTip", [exitCommands.join(', ')]) : '';
+            const listStartIndex = currentPage * pageSize
+            const exitCommands = config.exitCommandList
+            const exitCommandTip = config.menuExitCommandTip ? session.text(".exitCommandTip", [exitCommands.join(', ')]) : ''
 
             if (config.imageMode) {
-              const imageBuffer = await generateSongListImage(neteaseData, listStartIndex, config, fontFilePath, backgroundImagePath, ctx, logger);
-              if (!imageBuffer) {
-                return session.text(".resourceError");
+              const imageResult = await generateSongListImage(neteaseData, listStartIndex, config, fontFilePath, backgroundImagePath, ctx)
+              if (!imageResult.ok) {
+                return imageResult.reason === 'resource'
+                  ? session.text(".resourceError")
+                  : session.text(".imageGenerationFailed")
               }
-              const promptMessage = session.text(".imageListPrompt", [exitCommandTip.replaceAll('<br/>', '\n'), config.waitForTimeout]);
+              const imageBuffer = imageResult.image
+              const promptMessage = session.text(".imageListPrompt", [exitCommandTip.replaceAll('<br/>', '\n'), config.waitForTimeout])
               const songListMsg = await session.send([
                 h.quote(quoteId),
                 h.image(imageBuffer, 'image/jpeg'),
                 h.text(promptMessage),
-              ]);
-              songListMessageId = songListMsg[0] || null;
-              quoteId = songListMsg[0] || '';
+              ])
+              const id = lastMessageId(songListMsg)
+              songListMessageIds = toMessageIds(songListMsg)
+              quoteId = id || ''
             } else {
-              const neteaseListText = formatSongList(neteaseData, 'NetEase Music', listStartIndex, false);
-              const listText = `${neteaseListText}`;
-              const textPrompt = session.text(".textListPrompt", [listText, exitCommandTip, config.waitForTimeout])
-                .replaceAll('<br/>', '\n');
-              const payload = `${h.quote(quoteId)}${textPrompt}`;
-              const msg = await session.send(payload);
-              songListMessageId = msg.at(-1) || null;
-              quoteId = msg.at(-1) || '';
+              const neteaseListText = formatSongList(neteaseData, 'NetEase Music', listStartIndex)
+              const textPrompt = session.text(".textListPrompt", [neteaseListText, exitCommandTip, config.waitForTimeout])
+                .replaceAll('<br/>', '\n')
+              const msg = await session.send(`${h.quote(quoteId)}${textPrompt}`)
+              const id = lastMessageId(msg)
+              songListMessageIds = toMessageIds(msg)
+              quoteId = id || ''
             }
 
             const input = await session.prompt((promptSession: Session) => {
-              quoteId = promptSession.messageId || '';
-              const elements = promptSession.elements || [];
-              return h.select(elements, 'text').join('');
-            }, { timeout: config.waitForTimeout * 1000 });
+              quoteId = promptSession.messageId || ''
+              return h.select(promptSession.elements || [], 'text').join('')
+            }, { timeout: config.waitForTimeout * 1000 })
 
             if (isNullable(input)) {
-              if (config.recallMessages.includes('songList') && songListMessageId && session.channelId) {
-                try {
-                  await session.bot.deleteMessage(session.channelId, songListMessageId);
-                } catch (err) {
-                  logger.warn('撤回歌单消息失败', err);
-                }
-              }
+              await tryDeleteMessages(session, songListMessageIds, '歌单', logger)
               if (!config.recallMessages.includes('promptTimeout')) {
-                await session.send(`${h.quote(originalMessageId)}` + session.text(".promptTimeout"));
+                await session.send(`${h.quote(originalMessageId)}` + session.text(".promptTimeout"))
               }
-              return;
+              return
             }
 
-            if (exitCommands.includes(input)) {
-              if (config.recallMessages.includes('songList') && songListMessageId && session.channelId) {
-                try {
-                  await session.bot.deleteMessage(session.channelId, songListMessageId);
-                } catch (err) {
-                  logger.warn('撤回歌单消息失败', err);
-                }
-              }
+            const trimmed = input.trim()
+
+            if (exitCommands.includes(trimmed)) {
+              await tryDeleteMessages(session, songListMessageIds, '歌单', logger)
               if (!config.recallMessages.includes('exitPrompt')) {
-                await session.send(`${h.quote(originalMessageId)}` + session.text(".exitPrompt"));
+                await session.send(`${h.quote(originalMessageId)}` + session.text(".exitPrompt"))
               }
-              return;
+              return
             }
 
-            if (input.trim() === config.nextPageCommand) {
-              currentPage++;
-              continue;
+            if (trimmed === config.nextPageCommand) {
+              currentPage++
+              continue
             }
 
-            if (input.trim() === config.prevPageCommand) {
+            if (trimmed === config.prevPageCommand) {
               if (currentPage > 0) {
-                currentPage--;
-                continue;
+                currentPage--
+                continue
               } else {
-                await session.send(`${h.quote(quoteId)}` + session.text(".alreadyOnFirstPage"));
-                continue;
+                await session.send(`${h.quote(quoteId)}` + session.text(".alreadyOnFirstPage"))
+                continue
               }
             }
 
-            const serialNumber = +input;
-            const selectStartIndex = currentPage * pageSize + 1;
-            const selectEndIndex = currentPage * pageSize + neteaseData.length;
+            const serialNumber = +trimmed
+            const selectStartIndex = currentPage * pageSize + 1
+            const selectEndIndex = currentPage * pageSize + neteaseData.length
 
             if (!Number.isInteger(serialNumber) || serialNumber < selectStartIndex || serialNumber > selectEndIndex) {
-              if (config.recallMessages.includes('songList') && songListMessageId && session.channelId) {
-                try {
-                  await session.bot.deleteMessage(session.channelId, songListMessageId);
-                } catch (err) {
-                  logger.warn('撤回歌单消息失败', err);
-                }
-              }
+              await tryDeleteMessages(session, songListMessageIds, '歌单', logger)
               if (!config.recallMessages.includes('invalidNumber')) {
-                await session.send(`${h.quote(originalMessageId)}` + session.text(".invalidNumber"));
+                await session.send(`${h.quote(originalMessageId)}` + session.text(".invalidNumber"))
               }
-              return;
+              return
             }
 
-            selected = neteaseData[serialNumber - selectStartIndex];
-            break;
+            selected = neteaseData[serialNumber - selectStartIndex]
+            break
           }
         }
-        
-        if (!selected) return;
-        
-        const interval = selected.duration / 1000;
-        const [tipMessageId] = await session.send(h.quote(quoteId) + `` + h.text(config.generationTip))
+
+        if (!selected) return
+
+        const durationMs = selected.duration || 0
+        const [tipMessageId] = await session.send(h.quote(quoteId) + '' + h.text(config.generationTip))
+
         try {
-          let src: string = '';
+          let src = ''
           if (config.type === 'apis') {
-            src = `${config.metingAPI}?type=url&id=${selected.id}`;
+            src = `${config.metingAPI}?type=url&id=${selected.id}`
           } else if (config.type === 'custom') {
-            src = `${config.text}?type=url&id=${selected.id}`;
-          }
-          logger.info(selected)
-          logger.info(src)
-          logger.info(config.srcToWhat)
-          if (interval * 1000 > config.maxSongDuration * 1000 * 60) {
-            if (config.recallMessages.includes('generationTip') && tipMessageId && session.channelId) {
-              try {
-                await session.bot.deleteMessage(session.channelId, tipMessageId);
-              } catch (err) {
-                logger.warn('撤回提示消息失败', err);
-              }
-            }
-            if (config.recallMessages.includes('songList') && songListMessageId && session.channelId) {
-              try {
-                await session.bot.deleteMessage(session.channelId, songListMessageId);
-              } catch (err) {
-                logger.warn('撤回歌单消息失败', err);
-              }
-            }
-            if (!config.recallMessages.includes('durationExceeded')) {
-              await session.send(`${h.quote(originalMessageId)}` + session.text(".durationExceeded"));
-            }
-            return;
-          }
-          switch (config.srcToWhat) {
-            case 'text':
-              await session.send(h.text(src));
-              break;
-            case 'audio':
-              await session.send(h.audio(src));
-              break;
-            case 'audiobuffer': {
-              const response = await ctx.http.get(src, { responseType: 'arraybuffer' });
-              const buffer = Buffer.from(response);
-              await session.send(h.audio(buffer, 'audio/mpeg'));
-              break;
-            }
-            case 'video': {
-              await session.send(h.video(src));
-              break;
-            }
-            case 'file': {
-              const tempFilePath = await downloadFile(src, logger);
-              if (!tempFilePath) break;
-              const fileUrl = url.pathToFileURL(tempFilePath).href;
-              logger.info(fileUrl)
-              await session.send(h.file(fileUrl));
-              try {
-                fs.unlinkSync(tempFilePath);
-              } catch (err) {
-                logger.warn('删除临时文件失败', err);
-              }
-              break;
-            }
-            default:
-              ctx.logger.error(`Unsupported send type: ${config.srcToWhat}`);
-              return;
+            src = `${config.text}?type=url&id=${selected.id}`
           }
 
-          if (config.recallMessages.includes('generationTip') && tipMessageId && session.channelId) {
-            try {
-              await session.bot.deleteMessage(session.channelId, tipMessageId);
-            } catch (err) {
-              logger.warn('撤回提示消息失败', err);
-            }
+          if (config.loggerinfo) {
+            logger.info(selected)
+            logger.info(src)
+            logger.info(config.srcToWhat)
           }
-          if (config.recallMessages.includes('songList') && songListMessageId && session.channelId) {
-            try {
-              await session.bot.deleteMessage(session.channelId, songListMessageId);
-            } catch (err) {
-              logger.warn('撤回歌单消息失败', err);
+
+          if (durationMs > config.maxSongDuration * 60 * 1000) {
+            await tryDeleteMessage(session, tipMessageId, '提示', logger)
+            await tryDeleteMessages(session, songListMessageIds, '歌单', logger)
+            if (!config.recallMessages.includes('durationExceeded')) {
+              await session.send(`${h.quote(originalMessageId)}` + session.text(".durationExceeded"))
             }
+            return
           }
+
+          switch (config.srcToWhat) {
+            case 'text':
+              await session.send(h.text(src))
+              break
+            case 'audio':
+              await session.send(h.audio(src))
+              break
+            case 'audiobuffer': {
+              const response = await ctx.http.get(src, { responseType: 'arraybuffer' })
+              const buffer = Buffer.from(response)
+              await session.send(h.audio(buffer, 'audio/mpeg'))
+              break
+            }
+            case 'video': {
+              await session.send(h.video(src))
+              break
+            }
+            case 'file': {
+              const tempFilePath = await downloadFile(ctx, src, logger)
+              if (!tempFilePath) break
+              const fileUrl = url.pathToFileURL(tempFilePath).href
+              if (config.loggerinfo) logger.info(fileUrl)
+              await session.send(h.file(fileUrl))
+              try {
+                await fs.promises.unlink(tempFilePath)
+              } catch (err) {
+                logger.warn('删除临时文件失败', err)
+              }
+              break
+            }
+            default:
+              logger.error(`Unsupported send type: ${config.srcToWhat}`)
+              return
+          }
+
+          await tryDeleteMessage(session, tipMessageId, '提示', logger)
+          await tryDeleteMessages(session, songListMessageIds, '歌单', logger)
         } catch (error) {
-          if (config.recallMessages.includes('generationTip') && tipMessageId && session.channelId) {
-            try {
-              await session.bot.deleteMessage(session.channelId, tipMessageId);
-            } catch (err) {
-              logger.warn('撤回提示消息失败', err);
-            }
-          }
-          if (config.recallMessages.includes('songList') && songListMessageId && session.channelId) {
-            try {
-              await session.bot.deleteMessage(session.channelId, songListMessageId);
-            } catch (err) {
-              logger.warn('撤回歌单消息失败', err);
-            }
-          }
-          logger.error('获取歌曲详情或发送语音失败', error);
+          await tryDeleteMessage(session, tipMessageId, '提示', logger)
+          await tryDeleteMessages(session, songListMessageIds, '歌单', logger)
+          logger.error('获取歌曲详情或发送语音失败', error)
           if (!config.recallMessages.includes('getSongFailed')) {
-            await session.send(`${h.quote(originalMessageId)}` + session.text(".getSongFailed"));
+            await session.send(`${h.quote(originalMessageId)}` + session.text(".getSongFailed"))
           }
-          return;
+          return
         }
       })
   })
